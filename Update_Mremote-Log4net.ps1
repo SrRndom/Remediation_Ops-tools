@@ -22,7 +22,7 @@
 .PARAMETER SourceDllPath
     Path to the already-patched log4net.dll (net4xx build). Defaults to
     "log4net.dll" in the same folder as this script, so you only need to drop
-    the file next to it before running — no path to type each time.
+    the file next to it before running -- no path to type each time.
 
 .PARAMETER WhatIf
     Simulation mode: runs all checks but does not modify the DLL or the
@@ -70,8 +70,23 @@ function Write-Log {
 
 function Assert-AppClosed {
     $proc = Get-Process -Name "mRemoteNG" -ErrorAction SilentlyContinue
-    if ($proc) {
-        throw "mRemoteNG is still running (PID $($proc.Id)). Close it before continuing."
+    if (-not $proc) { return }
+
+    Write-Host ""
+    Write-Host "mRemoteNG is currently running (PID $($proc.Id))." -ForegroundColor Yellow
+    $answer = Read-Host "Close it now to continue? (Y/N)"
+    if ($answer -notmatch '^[Yy]') {
+        throw "mRemoteNG is still running. Close it manually and re-run the script."
+    }
+
+    Write-Log "Closing mRemoteNG (PID $($proc.Id)) at user's confirmation..."
+    if ($PSCmdlet.ShouldProcess("mRemoteNG (PID $($proc.Id))", "Stop process")) {
+        Stop-Process -Id $proc.Id -Force
+        Start-Sleep -Seconds 2
+        if (Get-Process -Name "mRemoteNG" -ErrorAction SilentlyContinue) {
+            throw "mRemoteNG did not close. Close it manually and re-run the script."
+        }
+        Write-Log "mRemoteNG closed."
     }
 }
 
@@ -90,7 +105,7 @@ function Get-CurrentLog4netInfo {
     }
 }
 
-# ── Rollback mode ────────────────────────────────────────────────────────
+# --- Rollback mode ---
 if ($Rollback) {
     Write-Log "ROLLBACK mode."
     if (-not (Test-Path $BackupDir)) {
@@ -122,7 +137,7 @@ if ($Rollback) {
     return
 }
 
-# ── Main flow ────────────────────────────────────────────────────────────
+# --- Main flow ---
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
 
@@ -169,7 +184,7 @@ if ($PSCmdlet.ShouldProcess($before.Path, "Replace with log4net $newVersion")) {
     try {
         Unblock-File -Path $before.Path -ErrorAction Stop
     } catch {
-        # No Mark of the Web to remove — fine if the DLL came from a local copy, not a download.
+        # No Mark of the Web to remove -- fine if the DLL came from a local copy, not a download.
     }
 }
 
@@ -227,7 +242,7 @@ try {
         Write-Log "Could not confirm the assembly loaded (timeout or no output). Verify manually by opening the app." "WARN"
     }
 } catch {
-    Write-Log "Automatic load check failed: $_. Not necessarily an error — confirm by opening the app manually." "WARN"
+    Write-Log "Automatic load check failed: $_. Not necessarily an error -- confirm by opening the app manually." "WARN"
 }
 
 $after = Get-CurrentLog4netInfo
