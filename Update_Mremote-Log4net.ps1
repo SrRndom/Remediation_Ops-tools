@@ -1,54 +1,3 @@
-<#
-.SYNOPSIS
-    Replaces the vulnerable log4net.dll embedded in mRemoteNG with a patched
-    Apache.log4net build, applying the required binding redirect.
-
-.DESCRIPTION
-    Automates the manual log4net remediation runbook for mRemoteNG:
-      1. Detects the currently embedded version and its hash (pre-change evidence).
-      2. Uses the patched log4net.dll placed next to this script (net4xx build).
-      3. Backs up the current DLL with a timestamp.
-      4. Replaces the DLL and unblocks it (Mark of the Web), if applicable.
-      5. Updates (or inserts) the bindingRedirect in mRemoteNG.exe.config.
-      6. Verifies the new assembly loads correctly (without opening the UI).
-      7. Prints a short summary of what changed.
-
-    Meant to be run one server at a time, manually, with human review of the
-    result before closing the scanner finding.
-
-.PARAMETER AppPath
-    mRemoteNG install path. Default: "C:\Program Files (x86)\mRemoteNG"
-
-.PARAMETER SourceDllPath
-    Path to the already-patched log4net.dll (net4xx build). Defaults to
-    "log4net.dll" in the same folder as this script, so you only need to drop
-    the file next to it before running -- no path to type each time.
-
-.PARAMETER WhatIf
-    Simulation mode: runs all checks but does not modify the DLL or the
-    .config file. Use this first to review before applying for real.
-
-.PARAMETER Rollback
-    Restores the original DLL from the most recent backup and reverts the
-    bindingRedirect that was added. Use if something went wrong.
-
-.EXAMPLE
-    .\Update-MRemoteNGLog4net.ps1 -WhatIf
-    Simulates the replacement using log4net.dll from the script's own folder.
-
-.EXAMPLE
-    .\Update-MRemoteNGLog4net.ps1
-    Runs the real replacement.
-
-.EXAMPLE
-    .\Update-MRemoteNGLog4net.ps1 -Rollback
-    Reverts to the original DLL from backup.
-
-.NOTES
-    Requires mRemoteNG to be closed before running (the script checks and aborts if it's open).
-    Requires PowerShell running elevated in most cases, since the app lives under Program Files.
-#>
-
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$AppPath = "C:\Program Files (x86)\mRemoteNG",
@@ -57,6 +6,35 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# --- Elevation check ---
+$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$currentPrincipal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
+$isAdmin = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if (-not $isAdmin) {
+    Write-Host ""
+    Write-Host "This script needs an elevated (Run as Administrator) PowerShell session." -ForegroundColor Yellow
+    Write-Host "mRemoteNG lives under Program Files, so writing there requires admin rights." -ForegroundColor Yellow
+    $answer = Read-Host "Relaunch this script elevated now? (Y/N)"
+    if ($answer -match '^[Yy]') {
+        $argList = @()
+        foreach ($key in $PSBoundParameters.Keys) {
+            $value = $PSBoundParameters[$key]
+            if ($value -is [switch]) {
+                if ($value.IsPresent) { $argList += "-$key" }
+            } else {
+                $argList += "-$key", "`"$value`""
+            }
+        }
+        $argString = "-NoExit -ExecutionPolicy Bypass -File `"$PSCommandPath`" " + ($argList -join " ")
+        Start-Process -FilePath "powershell.exe" -ArgumentList $argString -Verb RunAs
+        return
+    } else {
+        throw "Re-run this script from an elevated PowerShell session (Run as Administrator)."
+    }
+}
+
 $LogDir    = Join-Path $AppPath "log4net_remediation"
 $BackupDir = Join-Path $LogDir "backup"
 $LogFile   = Join-Path $LogDir ("log4net_remediation_{0}.log" -f (Get-Date -Format "yyyyMMdd_HHmmss"))
