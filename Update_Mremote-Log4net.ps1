@@ -1,3 +1,54 @@
+<#
+.SYNOPSIS
+    Replaces the vulnerable log4net.dll embedded in mRemoteNG with a patched
+    Apache.log4net build, applying the required binding redirect.
+
+.DESCRIPTION
+    Automates the manual log4net remediation runbook for mRemoteNG:
+      1. Detects the currently embedded version and its hash (pre-change evidence).
+      2. Uses the patched log4net.dll placed next to this script (net4xx build).
+      3. Backs up the current DLL with a timestamp.
+      4. Replaces the DLL and unblocks it (Mark of the Web), if applicable.
+      5. Updates (or inserts) the bindingRedirect in mRemoteNG.exe.config.
+      6. Verifies the new assembly loads correctly (without opening the UI).
+      7. Prints a short summary of what changed.
+
+    Meant to be run one server at a time, manually, with human review of the
+    result before closing the scanner finding.
+
+.PARAMETER AppPath
+    mRemoteNG install path. Default: "C:\Program Files (x86)\mRemoteNG"
+
+.PARAMETER SourceDllPath
+    Path to the already-patched log4net.dll (net4xx build). Defaults to
+    "log4net.dll" in the same folder as this script, so you only need to drop
+    the file next to it before running -- no path to type each time.
+
+.PARAMETER WhatIf
+    Simulation mode: runs all checks but does not modify the DLL or the
+    .config file. Use this first to review before applying for real.
+
+.PARAMETER Rollback
+    Restores the original DLL from the most recent backup and reverts the
+    bindingRedirect that was added. Use if something went wrong.
+
+.EXAMPLE
+    .\Update-MRemoteNGLog4net.ps1 -WhatIf
+    Simulates the replacement using log4net.dll from the script's own folder.
+
+.EXAMPLE
+    .\Update-MRemoteNGLog4net.ps1
+    Runs the real replacement.
+
+.EXAMPLE
+    .\Update-MRemoteNGLog4net.ps1 -Rollback
+    Reverts to the original DLL from backup.
+
+.NOTES
+    Requires mRemoteNG to be closed before running (the script checks and aborts if it's open).
+    Requires PowerShell running elevated in most cases, since the app lives under Program Files.
+#>
+
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$AppPath = "C:\Program Files (x86)\mRemoteNG",
@@ -124,6 +175,16 @@ Write-Log "AppPath: $AppPath"
 
 Assert-AppClosed
 
+if (-not (Test-Path $AppPath)) {
+    Write-Host ""
+    Write-Host "mRemoteNG was not found at: $AppPath" -ForegroundColor Yellow
+    $customPath = Read-Host "Enter the correct install folder (e.g. D:\Software\mRemoteNG)"
+    if (-not $customPath -or -not (Test-Path $customPath)) {
+        throw "Path not found: $customPath. Re-run the script with -AppPath pointing to the correct folder."
+    }
+    $AppPath = $customPath
+}
+
 if (-not (Test-Path $SourceDllPath)) {
     throw "Patched log4net.dll not found at $SourceDllPath. Place it next to this script, or pass -SourceDllPath explicitly."
 }
@@ -225,6 +286,32 @@ try {
 
 $after = Get-CurrentLog4netInfo
 Write-Log "log4net updated: $($before.FileVersion) -> $($after.FileVersion)"
+
+# The backed-up DLL is still the vulnerable version sitting on disk.
+# No "keep as-is" option -- it must be compressed or removed, not left as a plain vulnerable binary.
+Write-Host ""
+Write-Host "The old (vulnerable) DLL was backed up to: $backupDllPath" -ForegroundColor Yellow
+Write-Host "It's unused now, but it's still the vulnerable file sitting on disk -- pick one:"
+Write-Host "  [C] Compress it to .zip (keeps evidence, removes the raw vulnerable binary)"
+Write-Host "  [D] Delete it (no rollback possible afterwards)"
+
+do {
+    $backupAction = Read-Host "Choose C/D"
+} while ($backupAction -notmatch '^[CcDd]$')
+
+switch -Regex ($backupAction) {
+    '^[Cc]' {
+        $zipPath = "$backupDllPath.zip"
+        Compress-Archive -Path $backupDllPath -DestinationPath $zipPath -Force
+        Remove-Item $backupDllPath -Force
+        Write-Log "Old DLL compressed to $zipPath and raw .dll removed."
+    }
+    '^[Dd]' {
+        Remove-Item $backupDllPath -Force
+        Write-Log "Old DLL deleted. Rollback via -Rollback is no longer available for this run." "WARN"
+    }
+}
+
 Write-Log "Log file: $LogFile"
 
 Write-Host ""
