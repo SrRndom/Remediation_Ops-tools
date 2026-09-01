@@ -40,9 +40,9 @@
 
 .PARAMETER ScanDepth
     How many subfolder levels deep to search under C:\ and D:\ for leftover
-    7-Zip folders. Default: 4 (covers things like D:\Data\Old\Backup\Tools\7zip).
+    7-Zip folders. Default: 3 (covers things like D:\Software\Old\7zip).
     Raise it if your environment buries software deeper than that; lower it
-    if the scan is too slow on a server with a huge C:\ tree.
+    if the scan is still too slow on a server with a huge C:\ tree.
 
 .PARAMETER WhatIf
     Simulation mode: runs discovery and shows what would be removed/installed,
@@ -72,7 +72,7 @@
 param(
     [string]$NormalizedPath = "D:\Software\7-Zip",
     [string]$SourceMsiPath,
-    [int]$ScanDepth = 4,
+    [int]$ScanDepth = 3,
     [switch]$Force
 )
 
@@ -158,13 +158,39 @@ foreach ($r in $registeredInstalls) {
 # not folders that merely contain that substring (e.g. "7zip-Normalization",
 # which is this script's own working folder -- excluded explicitly below too
 # as a safety net regardless of what the regex matches).
+#
+# This walks the tree manually (instead of Get-ChildItem -Recurse) so it can
+# PRUNE noisy system folders -- skip descending into them entirely, rather
+# than descending fully and filtering results afterward. That's what actually
+# saves time on a real server with years of Windows/AppData/ProgramData files;
+# a post-filter still walks all of it first.
+$excludedFolderNames = @('Windows', 'ProgramData', 'AppData', 'System Volume Information', '$RECYCLE.BIN')
+
+function Find-SevenZipFolders {
+    param([string]$Root, [int]$MaxDepth)
+    $found = New-Object System.Collections.Generic.List[string]
+    $queue = New-Object System.Collections.Generic.Queue[object]
+    $queue.Enqueue(@{ Path = $Root; Depth = 0 })
+    while ($queue.Count -gt 0) {
+        $current = $queue.Dequeue()
+        $children = Get-ChildItem -LiteralPath $current.Path -Directory -Force -ErrorAction SilentlyContinue
+        foreach ($child in $children) {
+            if ($excludedFolderNames -contains $child.Name) { continue }
+            if ($child.Name -match '^7[\s\-]?zip$') { $found.Add($child.FullName) }
+            if ($current.Depth -lt $MaxDepth) {
+                $queue.Enqueue(@{ Path = $child.FullName; Depth = $current.Depth + 1 })
+            }
+        }
+    }
+    return $found
+}
+
 $searchRoots = @("C:\", "D:\") | Where-Object { Test-Path $_ }
 $candidateFolders = New-Object System.Collections.Generic.List[string]
 foreach ($root in $searchRoots) {
-    Get-ChildItem $root -Directory -Recurse -Depth $ScanDepth -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match '^7[\s\-]?zip$' } |
-        Where-Object { $_.FullName -ne $PSScriptRoot -and $PSScriptRoot -notlike "$($_.FullName)\*" -and $_.FullName -notlike "$PSScriptRoot\*" } |
-        ForEach-Object { if (-not $candidateFolders.Contains($_.FullName)) { $candidateFolders.Add($_.FullName) } }
+    Find-SevenZipFolders -Root $root -MaxDepth $ScanDepth |
+        Where-Object { $_ -ne $PSScriptRoot -and $PSScriptRoot -notlike "$_\*" -and $_ -notlike "$PSScriptRoot\*" } |
+        ForEach-Object { if (-not $candidateFolders.Contains($_)) { $candidateFolders.Add($_) } }
 }
 Write-Log "Candidate 7-Zip folders found on disk (scan depth $ScanDepth): $($candidateFolders.Count)"
 foreach ($f in $candidateFolders) { Write-Log "  - $f" }
