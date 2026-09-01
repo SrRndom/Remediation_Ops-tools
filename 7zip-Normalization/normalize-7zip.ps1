@@ -30,7 +30,8 @@
     list before anything gets removed.
 
 .PARAMETER NormalizedPath
-    Target install path for the clean reinstall. Default: "C:\Program Files\7-Zip"
+    Target install path for the clean reinstall.
+    Default: "D:\Software\7-Zip" (org standard as of 2026-08-31).
 
 .PARAMETER SourceMsiPath
     Path to the official 7-Zip MSI. Defaults to auto-detecting a matching
@@ -69,7 +70,7 @@
 
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string]$NormalizedPath = "C:\Program Files\7-Zip",
+    [string]$NormalizedPath = "D:\Software\7-Zip",
     [string]$SourceMsiPath,
     [int]$ScanDepth = 4,
     [switch]$Force
