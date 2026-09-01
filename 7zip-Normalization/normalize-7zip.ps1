@@ -132,22 +132,30 @@ $uninstallRoots = @(
     "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
     "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
 )
-$registeredInstalls = Get-ItemProperty $uninstallRoots -ErrorAction SilentlyContinue |
+$registeredInstalls = @(Get-ItemProperty $uninstallRoots -ErrorAction SilentlyContinue |
     Where-Object { $_.DisplayName -like "7-Zip*" } |
-    Select-Object DisplayName, DisplayVersion, InstallLocation, UninstallString, PSPath
+    Select-Object DisplayName, DisplayVersion, InstallLocation, UninstallString, PSPath)
 
 Write-Log "Registered 7-Zip entries found: $($registeredInstalls.Count)"
 foreach ($r in $registeredInstalls) {
-    $existsOnDisk = $r.InstallLocation -and (Test-Path $r.InstallLocation)
-    Write-Log ("  - {0} | v{1} | {2} | on disk: {3}" -f $r.DisplayName, $r.DisplayVersion, $r.InstallLocation, $existsOnDisk)
+    if ([string]::IsNullOrWhiteSpace($r.InstallLocation)) {
+        Write-Log ("  - {0} | v{1} | InstallLocation not set by this MSI (known 7-Zip quirk)" -f $r.DisplayName, $r.DisplayVersion)
+    } else {
+        Write-Log ("  - {0} | v{1} | {2} | on disk: {3}" -f $r.DisplayName, $r.DisplayVersion, $r.InstallLocation, (Test-Path $r.InstallLocation))
+    }
 }
 
 # --- Step 2: discover candidate folders on disk (registered or not) ---
+# Matches folder names that ARE "7-Zip"/"7zip"/"7 Zip" exactly (case-insensitive),
+# not folders that merely contain that substring (e.g. "7zip-Normalization",
+# which is this script's own working folder -- excluded explicitly below too
+# as a safety net regardless of what the regex matches).
 $searchRoots = @("C:\", "D:\") | Where-Object { Test-Path $_ }
 $candidateFolders = New-Object System.Collections.Generic.List[string]
 foreach ($root in $searchRoots) {
     Get-ChildItem $root -Directory -Recurse -Depth $ScanDepth -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match '7.?zip' } |
+        Where-Object { $_.Name -match '^7[\s\-]?zip$' } |
+        Where-Object { $_.FullName -ne $PSScriptRoot -and $PSScriptRoot -notlike "$($_.FullName)\*" -and $_.FullName -notlike "$PSScriptRoot\*" } |
         ForEach-Object { if (-not $candidateFolders.Contains($_.FullName)) { $candidateFolders.Add($_.FullName) } }
 }
 Write-Log "Candidate 7-Zip folders found on disk (scan depth $ScanDepth): $($candidateFolders.Count)"
@@ -191,11 +199,17 @@ foreach ($r in $registeredInstalls) {
 }
 
 # --- Step 4: remove orphaned registry entries (install location no longer exists) ---
-$stillRegistered = Get-ItemProperty $uninstallRoots -ErrorAction SilentlyContinue |
-    Where-Object { $_.DisplayName -like "7-Zip*" }
+# Note: 7-Zip's MSI doesn't always populate InstallLocation. Only treat an
+# entry as orphaned when InstallLocation IS populated and points nowhere --
+# an empty InstallLocation is ambiguous, not proof of being orphaned.
+$stillRegistered = @(Get-ItemProperty $uninstallRoots -ErrorAction SilentlyContinue |
+    Where-Object { $_.DisplayName -like "7-Zip*" })
 foreach ($r in $stillRegistered) {
-    $existsOnDisk = $r.InstallLocation -and (Test-Path $r.InstallLocation)
-    if (-not $existsOnDisk) {
+    if ([string]::IsNullOrWhiteSpace($r.InstallLocation)) {
+        Write-Log "Skipping orphan check for '$($r.DisplayName)': InstallLocation is blank (known 7-Zip MSI quirk, not treated as orphaned)." "WARN"
+        continue
+    }
+    if (-not (Test-Path $r.InstallLocation)) {
         if ($PSCmdlet.ShouldProcess($r.PSPath, "Remove orphaned registry entry")) {
             Remove-Item $r.PSPath -Force -Recurse -ErrorAction SilentlyContinue
             Write-Log "Removed orphaned registry entry: $($r.DisplayName) (pointed to missing path $($r.InstallLocation))"
