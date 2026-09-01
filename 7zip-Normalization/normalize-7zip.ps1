@@ -47,6 +47,12 @@
     Simulation mode: runs discovery and shows what would be removed/installed,
     without actually uninstalling, deleting, or installing anything.
 
+.PARAMETER Force
+    Skips both confirmation prompts (proceeding with uninstall/cleanup, and
+    deleting leftover orphan folders) and answers Yes to both automatically.
+    Use once you trust the discovery output, e.g. for unattended runs across
+    many jump servers. Elevation and destructive-step logging still apply.
+
 .EXAMPLE
     .\Normalize-7Zip.ps1 -WhatIf
     Shows what would happen without touching anything.
@@ -65,7 +71,8 @@
 param(
     [string]$NormalizedPath = "C:\Program Files\7-Zip",
     [string]$SourceMsiPath,
-    [int]$ScanDepth = 4
+    [int]$ScanDepth = 4,
+    [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -163,6 +170,8 @@ foreach ($f in $candidateFolders) { Write-Log "  - $f" }
 
 if ($registeredInstalls.Count -eq 0 -and $candidateFolders.Count -eq 0) {
     Write-Log "No 7-Zip traces found at all. Proceeding straight to clean install."
+} elseif ($Force) {
+    Write-Log "-Force given: proceeding with uninstall + cleanup without prompting."
 } else {
     Write-Host ""
     $proceed = Read-Host "Proceed with uninstall + cleanup of everything listed above? (Y/N)"
@@ -223,7 +232,12 @@ if ($orphanFolders) {
     Write-Host ""
     Write-Host "These folders are still on disk after uninstall (leftover / never registered):" -ForegroundColor Yellow
     $orphanFolders | ForEach-Object { Write-Host "  - $_" }
-    $removeOrphans = Read-Host "Delete these leftover folders? (Y/N)"
+    if ($Force) {
+        Write-Log "-Force given: deleting leftover folders without prompting."
+        $removeOrphans = "Y"
+    } else {
+        $removeOrphans = Read-Host "Delete these leftover folders? (Y/N)"
+    }
     if ($removeOrphans -match '^[Yy]') {
         foreach ($f in $orphanFolders) {
             if ($PSCmdlet.ShouldProcess($f, "Remove leftover folder")) {
