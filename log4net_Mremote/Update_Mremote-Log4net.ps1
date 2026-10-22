@@ -126,11 +126,15 @@ function Get-CurrentLog4netInfo {
     }
     $versionInfo = (Get-Item $dllPath).VersionInfo
     $hash = (Get-FileHash $dllPath -Algorithm SHA256).Hash
+    # AssemblyVersion is what the .NET runtime validates for binding redirects.
+    # It can differ from FileVersion, so the redirect must be built from this one.
+    $assemblyVersion = [System.Reflection.AssemblyName]::GetAssemblyName($dllPath).Version.ToString()
     [PSCustomObject]@{
-        Path           = $dllPath
-        FileVersion    = $versionInfo.FileVersion
-        ProductVersion = $versionInfo.ProductVersion
-        SHA256         = $hash
+        Path            = $dllPath
+        FileVersion     = $versionInfo.FileVersion
+        AssemblyVersion = $assemblyVersion
+        ProductVersion  = $versionInfo.ProductVersion
+        SHA256          = $hash
     }
 }
 
@@ -196,10 +200,11 @@ if (-not (Test-Path $configPath)) {
 }
 
 $newDll = Get-Item $SourceDllPath
-$newVersion = $newDll.VersionInfo.FileVersion
+$newVersion = [System.Reflection.AssemblyName]::GetAssemblyName($newDll.FullName).Version.ToString()
+Write-Log "Installed: assembly $($before.AssemblyVersion) (file $($before.FileVersion)) | Source: assembly $newVersion (file $($newDll.VersionInfo.FileVersion))"
 
-if ($before.FileVersion -eq $newVersion) {
-    Write-Log "Installed version already matches the source DLL ($newVersion). Nothing to do." "WARN"
+if ($before.AssemblyVersion -eq $newVersion) {
+    Write-Log "Installed assembly version already matches the source DLL ($newVersion). Nothing to do." "WARN"
     return
 }
 
@@ -258,7 +263,7 @@ if ($PSCmdlet.ShouldProcess($configPath, "Update log4net bindingRedirect")) {
     $dependentAssembly.AppendChild($assemblyIdentity) | Out-Null
 
     $bindingRedirect = $xml.CreateElement("bindingRedirect", "urn:schemas-microsoft-com:asm.v1")
-    $bindingRedirect.SetAttribute("oldVersion", "0.0.0.0-$($before.FileVersion)")
+    $bindingRedirect.SetAttribute("oldVersion", "0.0.0.0-$($before.AssemblyVersion)")
     $bindingRedirect.SetAttribute("newVersion", $newVersion)
     $dependentAssembly.AppendChild($bindingRedirect) | Out-Null
 
@@ -285,7 +290,7 @@ try {
 }
 
 $after = Get-CurrentLog4netInfo
-Write-Log "log4net updated: $($before.FileVersion) -> $($after.FileVersion)"
+Write-Log "log4net updated: $($before.AssemblyVersion) -> $($after.AssemblyVersion)"
 
 # The backed-up DLL is still the vulnerable version sitting on disk.
 # No "keep as-is" option -- it must be compressed or removed, not left as a plain vulnerable binary.
