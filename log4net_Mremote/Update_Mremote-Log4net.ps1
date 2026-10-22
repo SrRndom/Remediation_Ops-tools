@@ -17,7 +17,10 @@
     result before closing the scanner finding.
 
 .PARAMETER AppPath
-    mRemoteNG install path. Default: "C:\Program Files (x86)\mRemoteNG"
+    mRemoteNG install path. If omitted, it is auto-detected from the usual
+    locations (C:\Program Files (x86), C:\Program Files, D:\Software), the
+    uninstall registry entry, or a running mRemoteNG process. It only asks
+    when nothing or more than one install is found.
 
 .PARAMETER SourceDllPath
     Path to the already-patched log4net.dll (net4xx build). Defaults to
@@ -51,7 +54,7 @@
 
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string]$AppPath = "C:\Program Files (x86)\mRemoteNG",
+    [string]$AppPath,
     [string]$SourceDllPath = (Join-Path $PSScriptRoot "log4net.dll"),
     [switch]$Rollback
 )
@@ -83,6 +86,61 @@ if (-not $isAdmin) {
         return
     } else {
         throw "Re-run this script from an elevated PowerShell session (Run as Administrator)."
+    }
+}
+
+# --- Resolve the mRemoteNG install path ---
+# An explicit -AppPath always wins. Otherwise the script auto-detects the
+# install from the usual locations, the uninstall registry entry, and a
+# running process. It only asks when nothing is found, or when more than
+# one install is found and it cannot tell which one you mean.
+# This runs before the log/backup folders are defined so they always land
+# inside the real install folder.
+if ($PSBoundParameters.ContainsKey("AppPath")) {
+    if (-not (Test-Path $AppPath)) {
+        throw "The path given in -AppPath does not exist: $AppPath"
+    }
+} else {
+    $candidates = New-Object System.Collections.Generic.List[string]
+    $candidates.Add("C:\Program Files (x86)\mRemoteNG")
+    $candidates.Add("C:\Program Files\mRemoteNG")
+    $candidates.Add("D:\Software\mRemoteNG")
+
+    $regRoots = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+    Get-ItemProperty $regRoots -ErrorAction SilentlyContinue |
+        Where-Object { $_.DisplayName -like "mRemoteNG*" -and $_.InstallLocation } |
+        ForEach-Object { $candidates.Add($_.InstallLocation.TrimEnd("\")) }
+
+    Get-Process -Name "mRemoteNG" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path } |
+        ForEach-Object { $candidates.Add((Split-Path $_.Path -Parent)) }
+
+    $found = @($candidates | Sort-Object -Unique |
+        Where-Object { Test-Path (Join-Path $_ "mRemoteNG.exe") })
+
+    if ($found.Count -eq 1) {
+        $AppPath = $found[0]
+        Write-Host "Detected mRemoteNG at: $AppPath"
+    } elseif ($found.Count -gt 1) {
+        Write-Host ""
+        Write-Host "More than one mRemoteNG install was found:" -ForegroundColor Yellow
+        for ($i = 0; $i -lt $found.Count; $i++) {
+            Write-Host ("  [{0}] {1}" -f ($i + 1), $found[$i])
+        }
+        do {
+            $choice = Read-Host "Enter the number of the install to update"
+        } while (-not ($choice -match '^\d+$') -or [int]$choice -lt 1 -or [int]$choice -gt $found.Count)
+        $AppPath = $found[[int]$choice - 1]
+    } else {
+        Write-Host ""
+        Write-Host "mRemoteNG was not found in any of the usual locations." -ForegroundColor Yellow
+        $AppPath = Read-Host "Enter the install folder (e.g. D:\Software\mRemoteNG)"
+        if (-not $AppPath -or -not (Test-Path $AppPath)) {
+            throw "Path not found: $AppPath. Re-run the script with -AppPath pointing to the correct folder."
+        }
     }
 }
 
@@ -178,16 +236,6 @@ Write-Log "=== Starting mRemoteNG log4net remediation ==="
 Write-Log "AppPath: $AppPath"
 
 Assert-AppClosed
-
-if (-not (Test-Path $AppPath)) {
-    Write-Host ""
-    Write-Host "mRemoteNG was not found at: $AppPath" -ForegroundColor Yellow
-    $customPath = Read-Host "Enter the correct install folder (e.g. D:\Software\mRemoteNG)"
-    if (-not $customPath -or -not (Test-Path $customPath)) {
-        throw "Path not found: $customPath. Re-run the script with -AppPath pointing to the correct folder."
-    }
-    $AppPath = $customPath
-}
 
 if (-not (Test-Path $SourceDllPath)) {
     throw "Patched log4net.dll not found at $SourceDllPath. Place it next to this script, or pass -SourceDllPath explicitly."
