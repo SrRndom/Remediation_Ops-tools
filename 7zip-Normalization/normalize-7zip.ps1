@@ -31,7 +31,7 @@
 
 .PARAMETER NormalizedPath
     Target install path for the clean reinstall.
-    Default: "D:\Software\7-Zip" (org standard as of 2026-08-31).
+    Default: "D:\Software\7-Zip"
 
 .PARAMETER SourceMsiPath
     Path to the official 7-Zip MSI. Defaults to auto-detecting a matching
@@ -52,7 +52,7 @@
     Skips both confirmation prompts (proceeding with uninstall/cleanup, and
     deleting leftover orphan folders) and answers Yes to both automatically.
     Use once you trust the discovery output, e.g. for unattended runs across
-    many jump servers. Elevation and destructive-step logging still apply.
+    many servers. Elevation and destructive-step logging still apply.
 
 .EXAMPLE
     .\Normalize-7Zip.ps1 -WhatIf
