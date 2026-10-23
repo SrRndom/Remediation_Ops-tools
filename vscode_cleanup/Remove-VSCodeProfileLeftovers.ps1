@@ -39,11 +39,11 @@
 
 .EXAMPLE
     .\Remove-VSCodeProfileLeftovers.ps1 -WhatIf
-    Shows what would be removed without touching anything.
+    Shows what would be removed without touching anything. Already tested
 
 .EXAMPLE
     .\Remove-VSCodeProfileLeftovers.ps1 -Force
-    Removes the leftovers without prompting.
+    Removes the leftovers without prompting. Not recomended
 
 .NOTES
     Requires an elevated PowerShell session (needs rights over other users'
